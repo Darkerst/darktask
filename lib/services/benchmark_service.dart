@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:ffi' as ffi;
 import 'dart:io';
 import 'dart:isolate';
 import 'dart:math';
@@ -189,25 +190,9 @@ class BenchmarkService {
       case BenchmarkIntensity.gemiddeld:
         return max(1, (cores / 2).round());
       case BenchmarkIntensity.zwaar:
-        // Bewust NIET alle cores (was: `return cores;`): met alle cores
-        // vol bezet door een dichte, ononderbroken rekenlus blijft er voor
-        // de UI-thread van de app en voor de window manager zelf (GNOME's
-        // "ping"-controle) geen vrije kerntijd meer over, wat op Linux
-        // zichtbaar leidde tot "'com.example.darktask' reageert niet"
-        // tijdens zware/duurtests. Een kern gereserveerd laten lost dat
-        // structureel op. Maximaal haalbare score bij zwaar/duurtest daalt
-        // hierdoor licht; het label "N cores actief" volgt automatisch mee.
-        return max(1, cores - 1);
+        return cores;
       case BenchmarkIntensity.duurtest:
-        // Bewust NIET alle cores (was: `return cores;`): met alle cores
-        // vol bezet door een dichte, ononderbroken rekenlus blijft er voor
-        // de UI-thread van de app en voor de window manager zelf (GNOME's
-        // "ping"-controle) geen vrije kerntijd meer over, wat op Linux
-        // zichtbaar leidde tot "'com.example.darktask' reageert niet"
-        // tijdens zware/duurtests. Een kern gereserveerd laten lost dat
-        // structureel op. Maximaal haalbare score bij zwaar/duurtest daalt
-        // hierdoor licht; het label "N cores actief" volgt automatisch mee.
-        return max(1, cores - 1);
+        return cores;
     }
   }
 
@@ -817,13 +802,9 @@ class BenchmarkService {
       case BenchmarkIntensity.gemiddeld:
         return min(2, cores);
       case BenchmarkIntensity.zwaar:
-        // Zelfde reden als hierboven: 1 kern gereserveerd laten voor de
-        // UI/window manager (alleen relevant op machines met <=4 cores).
-        return min(4, max(1, cores - 1));
+        return min(4, cores);
       case BenchmarkIntensity.duurtest:
-        // Zelfde reden als hierboven: 1 kern gereserveerd laten voor de
-        // UI/window manager (alleen relevant op machines met <=4 cores).
-        return min(4, max(1, cores - 1));
+        return min(4, cores);
     }
   }
 
@@ -1183,25 +1164,9 @@ class BenchmarkService {
       case BenchmarkIntensity.gemiddeld:
         return max(1, (cores / 2).round());
       case BenchmarkIntensity.zwaar:
-        // Bewust NIET alle cores (was: `return cores;`): met alle cores
-        // vol bezet door een dichte, ononderbroken rekenlus blijft er voor
-        // de UI-thread van de app en voor de window manager zelf (GNOME's
-        // "ping"-controle) geen vrije kerntijd meer over, wat op Linux
-        // zichtbaar leidde tot "'com.example.darktask' reageert niet"
-        // tijdens zware/duurtests. Een kern gereserveerd laten lost dat
-        // structureel op. Maximaal haalbare score bij zwaar/duurtest daalt
-        // hierdoor licht; het label "N cores actief" volgt automatisch mee.
-        return max(1, cores - 1);
+        return cores;
       case BenchmarkIntensity.duurtest:
-        // Bewust NIET alle cores (was: `return cores;`): met alle cores
-        // vol bezet door een dichte, ononderbroken rekenlus blijft er voor
-        // de UI-thread van de app en voor de window manager zelf (GNOME's
-        // "ping"-controle) geen vrije kerntijd meer over, wat op Linux
-        // zichtbaar leidde tot "'com.example.darktask' reageert niet"
-        // tijdens zware/duurtests. Een kern gereserveerd laten lost dat
-        // structureel op. Maximaal haalbare score bij zwaar/duurtest daalt
-        // hierdoor licht; het label "N cores actief" volgt automatisch mee.
-        return max(1, cores - 1);
+        return cores;
     }
   }
 
@@ -2064,7 +2029,54 @@ class _CpuWorkerConfig {
 /// floating-point busy work, no external dependencies, bounded to avoid
 /// overflow. Reports its operation count back roughly every 200ms so
 /// the main isolate can compute a live combined rate.
+
+/// Linux only: lowers just THIS worker isolate's own OS-thread scheduling
+/// priority (its "niceness"), as the very first thing it does.
+///
+/// Geverifieerde oorzaak (Flutter's eigen "Merged threads on Linux"-
+/// migratienotitie + GNOME Mutter's check-alive-timeout gsetting, beide
+/// rechtstreeks nagelezen): sinds Flutter stable 3.41 (deze app bouwt op
+/// 3.50.1) is de Linux "platform thread" -- die GTK/X11/Wayland-events
+/// moet blijven verwerken, inclusief Mutter's periodieke "leef je nog?"-
+/// ping -- samengevoegd met de Dart hoofd/UI-isolate-thread. Mutter's
+/// standaard check-alive-timeout is 5000ms: krijgt die samengevoegde
+/// thread niet op tijd de kans om binnen 5s te antwoorden, dan toont
+/// GNOME "reageert niet" -- los van hoeveel cores er elders nominaal vrij
+/// zijn, want Linux' CFS-scheduler geeft die ene thread geen intrinsieke
+/// voorrang boven andere, even hoog geprioriteerde actieve threads. Een
+/// eerdere poging (1 core vrijhouden) loste dit niet op -- top -H liet
+/// tijdens een reproductie nog ~30% idle CPU zien terwijl het dialoog
+/// actief was, wat bevestigt dat het nooit om kern-aantal ging.
+///
+/// Linux/NPTL-feit (niet specifiek voor deze app): setpriority(PRIO_PROCESS,
+/// who, ...) met who==0 raakt alleen de AANROEPENDE thread, niet het hele
+/// proces -- elke NPTL-thread is zijn eigen planbare kernel-taak. libc's
+/// nice() (een dunne wrapper om diezelfde syscall) aanroepen vanuit een
+/// net gestarte workerisolate verlaagt dus alleen de prioriteit van DIE
+/// ene workerthread; de samengevoegde UI/platform-thread blijft op normale
+/// prioriteit staan, waardoor Linux' scheduler die laatste systematisch
+/// voortrekt zodra ze om een kern strijden -- ongeacht het aantal cores.
+///
+/// Best-effort en stil bij falen: in het ergste geval draait deze worker
+/// gewoon op normale prioriteit zoals voorheen, zonder deze extra
+/// bescherming -- nooit een reden om de test te laten mislukken. print(),
+/// niet AppLogger: dit draait in een vers gespawnde isolate zonder
+/// Flutter-plugin-bindings (vandaar dat elke andere logregel in dit
+/// bestand vanuit de hoofdisolate komt).
+void _lowerThisWorkerThreadPriorityOnLinux() {
+  if (!Platform.isLinux) return;
+  try {
+    final libc = ffi.DynamicLibrary.open('libc.so.6');
+    final nice = libc
+        .lookupFunction<ffi.Int32 Function(ffi.Int32), int Function(int)>('nice');
+    nice(19); // 19 = laagst mogelijke OS-prioriteit (max niceness)
+  } catch (e) {
+    print('DarkTask: kon workerthread-prioriteit niet verlagen (niet kritiek): $e');
+  }
+}
+
 void _cpuWorkerEntry(_CpuWorkerConfig config) {
+  _lowerThisWorkerThreadPriorityOnLinux();
   final stopwatch = Stopwatch()..start();
   var opsSinceReport = 0;
   var lastReportMs = 0;
@@ -2099,6 +2111,7 @@ class _MemoryWorkerConfig {
 /// buffer into another for the test duration. Reports bytes copied back
 /// roughly every 200ms, same cadence as the CPU worker.
 void _memoryWorkerEntry(_MemoryWorkerConfig config) {
+  _lowerThisWorkerThreadPriorityOnLinux();
   final stopwatch = Stopwatch()..start();
   final src = Uint8List(config.bufferBytes);
   final dst = Uint8List(config.bufferBytes);
@@ -2141,6 +2154,7 @@ class _CryptoWorkerConfig {
 /// Reports bytes hashed back roughly every 200ms, same cadence as the
 /// other workers.
 void _cryptoWorkerEntry(_CryptoWorkerConfig config) {
+  _lowerThisWorkerThreadPriorityOnLinux();
   final stopwatch = Stopwatch()..start();
   final data = Uint8List(4 * 1024 * 1024);
   for (var i = 0; i < data.length; i += 4096) {
