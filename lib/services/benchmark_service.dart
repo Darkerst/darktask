@@ -189,9 +189,25 @@ class BenchmarkService {
       case BenchmarkIntensity.gemiddeld:
         return max(1, (cores / 2).round());
       case BenchmarkIntensity.zwaar:
-        return cores;
+        // Bewust NIET alle cores (was: `return cores;`): met alle cores
+        // vol bezet door een dichte, ononderbroken rekenlus blijft er voor
+        // de UI-thread van de app en voor de window manager zelf (GNOME's
+        // "ping"-controle) geen vrije kerntijd meer over, wat op Linux
+        // zichtbaar leidde tot "'com.example.darktask' reageert niet"
+        // tijdens zware/duurtests. Een kern gereserveerd laten lost dat
+        // structureel op. Maximaal haalbare score bij zwaar/duurtest daalt
+        // hierdoor licht; het label "N cores actief" volgt automatisch mee.
+        return max(1, cores - 1);
       case BenchmarkIntensity.duurtest:
-        return cores;
+        // Bewust NIET alle cores (was: `return cores;`): met alle cores
+        // vol bezet door een dichte, ononderbroken rekenlus blijft er voor
+        // de UI-thread van de app en voor de window manager zelf (GNOME's
+        // "ping"-controle) geen vrije kerntijd meer over, wat op Linux
+        // zichtbaar leidde tot "'com.example.darktask' reageert niet"
+        // tijdens zware/duurtests. Een kern gereserveerd laten lost dat
+        // structureel op. Maximaal haalbare score bij zwaar/duurtest daalt
+        // hierdoor licht; het label "N cores actief" volgt automatisch mee.
+        return max(1, cores - 1);
     }
   }
 
@@ -801,9 +817,13 @@ class BenchmarkService {
       case BenchmarkIntensity.gemiddeld:
         return min(2, cores);
       case BenchmarkIntensity.zwaar:
-        return min(4, cores);
+        // Zelfde reden als hierboven: 1 kern gereserveerd laten voor de
+        // UI/window manager (alleen relevant op machines met <=4 cores).
+        return min(4, max(1, cores - 1));
       case BenchmarkIntensity.duurtest:
-        return min(4, cores);
+        // Zelfde reden als hierboven: 1 kern gereserveerd laten voor de
+        // UI/window manager (alleen relevant op machines met <=4 cores).
+        return min(4, max(1, cores - 1));
     }
   }
 
@@ -1163,9 +1183,25 @@ class BenchmarkService {
       case BenchmarkIntensity.gemiddeld:
         return max(1, (cores / 2).round());
       case BenchmarkIntensity.zwaar:
-        return cores;
+        // Bewust NIET alle cores (was: `return cores;`): met alle cores
+        // vol bezet door een dichte, ononderbroken rekenlus blijft er voor
+        // de UI-thread van de app en voor de window manager zelf (GNOME's
+        // "ping"-controle) geen vrije kerntijd meer over, wat op Linux
+        // zichtbaar leidde tot "'com.example.darktask' reageert niet"
+        // tijdens zware/duurtests. Een kern gereserveerd laten lost dat
+        // structureel op. Maximaal haalbare score bij zwaar/duurtest daalt
+        // hierdoor licht; het label "N cores actief" volgt automatisch mee.
+        return max(1, cores - 1);
       case BenchmarkIntensity.duurtest:
-        return cores;
+        // Bewust NIET alle cores (was: `return cores;`): met alle cores
+        // vol bezet door een dichte, ononderbroken rekenlus blijft er voor
+        // de UI-thread van de app en voor de window manager zelf (GNOME's
+        // "ping"-controle) geen vrije kerntijd meer over, wat op Linux
+        // zichtbaar leidde tot "'com.example.darktask' reageert niet"
+        // tijdens zware/duurtests. Een kern gereserveerd laten lost dat
+        // structureel op. Maximaal haalbare score bij zwaar/duurtest daalt
+        // hierdoor licht; het label "N cores actief" volgt automatisch mee.
+        return max(1, cores - 1);
     }
   }
 
