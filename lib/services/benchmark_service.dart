@@ -295,6 +295,10 @@ class BenchmarkService {
       _activeCpuHeavyTests++;
 
       final safetyTimer = Timer.periodic(const Duration(seconds: 2), (timer) async {
+        // TIJDELIJKE DIAGNOSE (weer verwijderen zodra we weten wat het is):
+        // bewijst rechtstreeks of de hoofdisolate deze tick nog elke 2s
+        // haalt tijdens "reageert niet".
+        print('[DIAGNOSE] ${DateTime.now().toIso8601String()} CPU-test hoofdisolate-tick, nog actief');
         if (cancelled) return;
         // Reads the shared feed's cached last reading rather than
         // calling sensors.readCpu() itself — see BenchmarkCpuTempFeed's
@@ -2075,7 +2079,7 @@ void _lowerThisWorkerThreadPriorityOnLinux() {
   }
 }
 
-void _cpuWorkerEntry(_CpuWorkerConfig config) {
+void _cpuWorkerEntry(_CpuWorkerConfig config) async {
   _lowerThisWorkerThreadPriorityOnLinux();
   final stopwatch = Stopwatch()..start();
   var opsSinceReport = 0;
@@ -2095,6 +2099,27 @@ void _cpuWorkerEntry(_CpuWorkerConfig config) {
       opsSinceReport = 0;
       lastReportMs = nowMs;
     }
+
+    // ECHTE ROOT CAUSE (bevestigd door Dart-VM-ontwikkelaars zelf, zie
+    // github.com/dart-lang/sdk/issues/51254 en
+    // github.com/flutter/flutter/issues/161224): de Dart VM staat maar
+    // een vast, beperkt aantal isolates toe dat écht tegelijk
+    // ("in parallel") mag draaien zonder ooit terug te geven aan zijn
+    // eigen event loop — ongeveer 6 à 8, volledig ONAFHANKELIJK van het
+    // aantal CPU-cores. Dart-ontwikkelaar mkustermann hierover: "one can
+    // run into this also in Dart if the dart code runs very long
+    // synchronous code" — precies wat deze while-loop tot nu toe deed:
+    // urenlang puur synchrone Dart-code zonder ooit een await. Zo'n
+    // isolate bezet zijn "slot" voor altijd, waardoor andere isolates
+    // (uiteindelijk ook het hoofdisolaat/de GUI) voor onbepaalde tijd
+    // kunnen vastlopen op het wachten op een vrij slot — dit is dus geen
+    // kwestie van CPU-verzadiging of OS-scheduling (vandaar dat de
+    // eerdere nice()-fix niets opleverde), maar een Dart VM-interne
+    // beperking. Door hier na elke rapportageronde héél even (0ms) terug
+    // te geven aan de event loop, geeft deze isolate zijn "slot"
+    // regelmatig vrij, zonder de gemeten rekensnelheid merkbaar te
+    // beïnvloeden.
+    await Future<void>.delayed(Duration.zero);
   }
   if (opsSinceReport > 0) config.sendPort.send(opsSinceReport);
   config.sendPort.send('done');
@@ -2153,7 +2178,7 @@ class _CryptoWorkerConfig {
 /// buffer using package:crypto's real (not hand-rolled) implementation.
 /// Reports bytes hashed back roughly every 200ms, same cadence as the
 /// other workers.
-void _cryptoWorkerEntry(_CryptoWorkerConfig config) {
+void _cryptoWorkerEntry(_CryptoWorkerConfig config) async {
   _lowerThisWorkerThreadPriorityOnLinux();
   final stopwatch = Stopwatch()..start();
   final data = Uint8List(4 * 1024 * 1024);
@@ -2174,6 +2199,13 @@ void _cryptoWorkerEntry(_CryptoWorkerConfig config) {
       bytesSinceReport = 0;
       lastReportMs = nowMs;
     }
+
+    // Zie de uitgebreide toelichting bij _cpuWorkerEntry hierboven:
+    // zelfde bevestigde Dart VM-limiet op het aantal isolates dat écht
+    // parallel mag draaien zonder terug te geven aan de event loop
+    // (dart-lang/sdk#51254, flutter/flutter#161224) — hier na elke
+    // hash-ronde toegepast.
+    await Future<void>.delayed(Duration.zero);
   }
   if (bytesSinceReport > 0) config.sendPort.send(bytesSinceReport);
   config.sendPort.send('done');
