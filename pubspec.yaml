@@ -1,0 +1,46 @@
+name: darktask
+description: "DarkTask — cross-platform system monitor & benchmark tool (Darkerst Inc.)"
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.6
+  intl: ^0.19.0
+  path_provider: ^2.1.3
+  fl_chart: ^0.68.0
+  crypto: ^3.0.3
+  ffi: ^2.1.3
+  # System tray icon + context menu (Windows/Linux) and desktop close
+  # -> hide-to-tray behavior. See lib/services/tray_service.dart for
+  # the "why": greenlit explicitly by the user ("tray/notificaties dit
+  # wel") after auto-update was deliberately left out (see that
+  # file's doc for the distinction).
+  tray_manager: ^0.5.3
+  window_manager: ^0.5.2
+  # Native desktop notifications (Windows toast / Linux libnotify),
+  # used both for the one-time "still running in the tray" explainer
+  # and for the CPU-temperature/disk-space background alerts in
+  # lib/services/alert_monitor_service.dart.
+  local_notifier: ^0.1.6
+  # Pure-Dart PDF generation (no native/platform plugin code, so it
+  # works unmodified on both Windows and Linux) — used by
+  # lib/services/report_service.dart to produce the colored PDF version
+  # of the "Rapport exporteren" system/benchmark report, alongside the
+  # HTML version it also writes.
+  pdf: ^3.10.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/tray_icon.ico
+    - assets/tray_icon.png
