@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:local_notifier/local_notifier.dart';
-import 'package:tray_manager/tray_manager.dart';
+import 'package:tray_manager/legacy.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../core/logging/app_logger.dart';
