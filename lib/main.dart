@@ -11,6 +11,7 @@ import 'services/sensors/linux_sensor_service.dart';
 import 'services/sensors/system_sensor_service.dart';
 import 'services/sensors/windows/native_elevation_check.dart';
 import 'services/sensors/windows/windows_sensor_service.dart';
+import 'services/power_context.dart';
 import 'services/settings_service.dart';
 import 'services/tray_service.dart';
 
@@ -34,6 +35,12 @@ void main() async {
   // startup — by the time the home screen's own first poll runs a
   // moment later, some of this may already be warm.
   unawaited(warmUpSensors(sensors));
+
+  // Warmt PowerContext.capture() alvast op bij app-start (fire-and-forget),
+  // zodat het Linux-only fork()-moment (powerprofilesctl) nooit meer
+  // precies samenvalt met de start van een benchmarktest — zie
+  // power_context.dart voor de volledige, geverifieerde uitleg.
+  unawaited(PowerContext.capture());
 
   // Fire-and-forget, same reasoning as warmUpSensors above: on a
   // launch where this process is already running elevated, silently

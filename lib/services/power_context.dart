@@ -78,7 +78,10 @@ class PowerContext {
   static Future<PowerContext> capture() {
     final cached = _cached;
     final at = _cachedAt;
-    if (cached != null && at != null && DateTime.now().difference(at) < const Duration(seconds: 2)) {
+    // 5 minuten i.p.v. 2 seconden: voorkomt dat Process.run('powerprofilesctl')
+    // (gebruikt fork() op Linux, zie main.dart) bij elke losse testrun
+    // opnieuw wordt aangeroepen.
+    if (cached != null && at != null && DateTime.now().difference(at) < const Duration(minutes: 5)) {
       return cached;
     }
     final fresh = _captureUncached();
