@@ -67,6 +67,8 @@ jobs:
         run: flutter pub get
 
       - name: Build Linux release
+        env:
+          CXXFLAGS: "-Wno-error=deprecated-declarations"
         run: flutter build linux --release
 
       - name: Upload build artifact
