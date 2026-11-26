@@ -17,6 +17,19 @@ jobs:
         with:
           channel: stable
 
+      - name: Add missing Flutter Windows scaffolding (behoudt onze aanpassingen)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path _darktask_backup | Out-Null
+          Copy-Item windows\runner\CMakeLists.txt _darktask_backup\ -Force
+          Copy-Item windows\runner\runner.exe.manifest _darktask_backup\ -Force
+          Copy-Item windows\runner\resources -Destination _darktask_backup\resources -Recurse -Force
+          flutter create --platforms=windows .
+          Copy-Item _darktask_backup\CMakeLists.txt windows\runner\CMakeLists.txt -Force
+          Copy-Item _darktask_backup\runner.exe.manifest windows\runner\runner.exe.manifest -Force
+          Copy-Item _darktask_backup\resources\* windows\runner\resources\ -Force -Recurse
+          Remove-Item _darktask_backup -Recurse -Force
+
       - name: Get dependencies
         run: flutter pub get
 
