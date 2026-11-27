@@ -132,6 +132,12 @@ class TrayService with TrayListener, WindowListener {
         // zonder dat de gebruiker het zelf hoeft te doen.
         final size = await windowManager.getSize();
         await windowManager.setSize(Size(size.width + 1, size.height));
+        // Zonder deze korte pauze volgen de twee setSize()-aanroepen
+        // elkaar te snel op om GTK er daadwerkelijk een frame tussenin
+        // te laten tekenen — dan is het netto effect "geen zichtbare
+        // resize" en dus ook geen repaint, precies zoals we zagen (geen
+        // verbetering zonder deze pauze).
+        await Future.delayed(const Duration(milliseconds: 100));
         await windowManager.setSize(size);
       }
     } catch (e) {
