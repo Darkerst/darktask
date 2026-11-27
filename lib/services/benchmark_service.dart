@@ -379,10 +379,6 @@ class BenchmarkService {
       _activeCpuHeavyTests++;
 
       final safetyTimer = Timer.periodic(const Duration(seconds: 2), (timer) async {
-        // TIJDELIJKE DIAGNOSE (weer verwijderen zodra we weten wat het is):
-        // bewijst rechtstreeks of de hoofdisolate deze tick nog elke 2s
-        // haalt tijdens "reageert niet".
-        print('[DIAGNOSE] ${DateTime.now().toIso8601String()} CPU-test hoofdisolate-tick, nog actief');
         if (cancelled) return;
         // Reads the shared feed's cached last reading rather than
         // calling sensors.readCpu() itself — see BenchmarkCpuTempFeed's
