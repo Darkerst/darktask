@@ -1,0 +1,17 @@
+name: benchmark_worker
+description: >
+  Losse, puur-Dart CLI-executable voor DarkTask's CPU-/crypto-
+  benchmarkworkers, gestart als apart OS-proces door
+  lib/services/benchmark_service.dart bij "zwaar"/"duurtest". Bewust
+  een eigen, minimale package (geen afhankelijkheid van het Flutter-
+  package-graph van de hoofdapp, dus geen last van diens zwaardere
+  transitieve dependencies), zodat "dart compile exe" hier zonder
+  problemen werkt.
+publish_to: 'none'
+version: 0.1.0
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  crypto: ^3.0.3

@@ -175,6 +175,45 @@ class BenchmarkService {
       BenchmarkHistoryStore.instance.forType(type, intensity);
 
   // ---------------------------------------------------------------------
+  // Los workerproces i.p.v. Dart-isolate voor "zwaar"/"duurtest" —
+  // ROOT CAUSE EN WAAROM (bevestigd door het Dart-team zelf, zie
+  // dart-lang/sdk#51254 en flutter/flutter#161224): de Dart VM staat
+  // maar een vast, klein aantal isolates toe dat écht parallel mag
+  // draaien BINNEN ÉÉN VM-INSTANTIE, ongeacht het aantal CPU-cores — en
+  // spawnt daarbovenop nog eigen GC-hulpthreads
+  // (marker_tasks/compactor_tasks) zodra er genoeg garbage is
+  // opgebouwd, waardoor zelfs een voorzichtig aantal isolates die
+  // limiet alsnog kan overschrijden. Een los OS-proces heeft zijn EIGEN
+  // Dart VM-instantie, dus die limiet geldt daar niet overheen — exact
+  // zoals stress-ng, AIDA64 en andere "echte" benchmarktools hun
+  // workers als losse processen draaien i.p.v. threads/isolates binnen
+  // één proces. Zie tools/benchmark_worker/ voor de broncode van dat
+  // losse programma.
+  //
+  // Dit vereist wel dat die losse executable daadwerkelijk meegeleverd
+  // is naast de hoofd-app (de CI-pipeline compileert en bundelt 'm als
+  // "darktask_benchmark_worker") — ontbreekt hij (bijv. tijdens
+  // "flutter run" in ontwikkeling, zonder die CI-stap), dan vallen
+  // _cpuWorkerCountFor/_cryptoWorkerCountFor terug op de oude, veilige
+  // isolate-cap van 3 workers, zodat de app ook dan nooit kan
+  // vastlopen — alleen met een lagere score.
+  //
+  // Alleen relevant op Linux: dit "reageert niet"-probleem is
+  // Linux-specifiek; de Windows-tests blijven ongewijzigd op isolates.
+  File? get _benchmarkWorkerBinary {
+    if (_benchmarkWorkerBinaryChecked) return _benchmarkWorkerBinaryCache;
+    _benchmarkWorkerBinaryChecked = true;
+    if (!Platform.isLinux) return null;
+    final dir = File(Platform.resolvedExecutable).parent.path;
+    final candidate = File('$dir${Platform.pathSeparator}darktask_benchmark_worker');
+    _benchmarkWorkerBinaryCache = candidate.existsSync() ? candidate : null;
+    return _benchmarkWorkerBinaryCache;
+  }
+
+  File? _benchmarkWorkerBinaryCache;
+  bool _benchmarkWorkerBinaryChecked = false;
+
+  // ---------------------------------------------------------------------
   // CPU test — real work: N isolates each run a bounded floating-point
   // busy loop for the test duration, reporting their operation counts
   // back periodically. The combined operations/sec across all isolates
@@ -190,25 +229,15 @@ class BenchmarkService {
       case BenchmarkIntensity.gemiddeld:
         return max(1, (cores / 2).round());
       case BenchmarkIntensity.zwaar:
-        // VEILIGE CAP I.P.V. ALLE CORES (hier stond voorheen gewoon
-        // "return cores;" — op de testmachine dus 12 workers, zonder
-        // enige begrenzing). Root cause (bevestigd door het Dart-team
-        // zelf, zie dart-lang/sdk#51254 en flutter/flutter#161224): de
-        // Dart VM staat maar een vast, klein aantal isolates toe dat
-        // écht parallel mag draaien, los van het aantal CPU-cores. Een
-        // gdb thread-dump tijdens een echte bevriezing liet daarnaast
-        // ook nog eens extra "DartWorker"-OS-threads zien — Dart's eigen
-        // GC-hulpthreads (standaard "marker_tasks"/"compactor_tasks",
-        // 2+2), die pas verschijnen zodra er genoeg "rommel" is
-        // opgebouwd (vandaar dat de bevriezing pas na een tijdje
-        // optreedt, niet meteen). Met 12 eigen workers + die
-        // GC-hulpthreads kom je ruim boven de echte, onbekende maar
-        // kennelijk lage limiet uit. Deze cap verlaagt het eigen
-        // workeraantal naar 3, ruim onder die grens, ook met de
-        // GC-hulpthreads erbij.
-        return min(3, cores);
       case BenchmarkIntensity.duurtest:
-        return min(3, cores);
+        // Vol aantal cores zodra het losse workerproces beschikbaar is
+        // (zie _benchmarkWorkerBinary hierboven) — dan geldt de Dart
+        // VM-isolate-limiet niet meer, want elk workerproces draait in
+        // zijn eigen VM-instantie. Zonder dat losse programma (bijv.
+        // tijdens "flutter run" in ontwikkeling) blijft de oude,
+        // empirisch bevestigd veilige isolate-cap van 3 workers gelden,
+        // zodat de app nooit kan vastlopen — wel met een lagere score.
+        return _benchmarkWorkerBinary != null ? cores : min(3, cores);
     }
   }
 
@@ -233,8 +262,16 @@ class BenchmarkService {
     Future<void> run() async {
       final workerCount = workerCountOverride ?? _cpuWorkerCountFor(intensity);
       final duration = _cpuDurationFor(intensity);
-      final receivePort = ReceivePort();
+      // Losse OS-processen (i.p.v. Dart-isolates) voor "zwaar"/"duurtest"
+      // zodra het losse workerprogramma meegeleverd is — zie de
+      // toelichting bij _benchmarkWorkerBinary hierboven voor de "waarom".
+      final useProcessWorkers = (intensity == BenchmarkIntensity.zwaar ||
+              intensity == BenchmarkIntensity.duurtest) &&
+          _benchmarkWorkerBinary != null;
+      final receivePort = useProcessWorkers ? null : ReceivePort();
       final isolates = <Isolate>[];
+      final processes = <Process>[];
+      final processSubs = <StreamSubscription<String>>[];
       final stopwatch = Stopwatch()..start();
       var totalOps = 0;
       var peakTemp = 0.0;
@@ -254,9 +291,16 @@ class BenchmarkService {
       final powerAtStart = await _logPowerAtStart('CPU-test');
 
       try {
-        for (var i = 0; i < workerCount; i++) {
-          isolates.add(await Isolate.spawn(
-              _cpuWorkerEntry, _CpuWorkerConfig(receivePort.sendPort, duration)));
+        if (useProcessWorkers) {
+          final binaryPath = _benchmarkWorkerBinary!.path;
+          for (var i = 0; i < workerCount; i++) {
+            processes.add(await Process.start(binaryPath, ['cpu', '${duration.inMilliseconds}']));
+          }
+        } else {
+          for (var i = 0; i < workerCount; i++) {
+            isolates.add(await Isolate.spawn(
+                _cpuWorkerEntry, _CpuWorkerConfig(receivePort!.sendPort, duration)));
+          }
         }
       } catch (e) {
         AppLogger.instance.error(_logSource, 'Kon CPU-testworkers niet starten: $e');
@@ -285,18 +329,42 @@ class BenchmarkService {
       final workStopwatch = Stopwatch()..start();
 
       var doneWorkers = 0;
-      final opsSub = receivePort.listen((message) {
-        if (message == 'done') {
-          doneWorkers++;
-          return;
+      void registerOps(int ops) {
+        totalOps += ops;
+        final phase =
+            (stopwatch.elapsed.inMilliseconds / duration.inMilliseconds * 3).floor().clamp(0, 2);
+        phaseOps[phase] += ops;
+      }
+
+      final StreamSubscription? opsSub;
+      if (useProcessWorkers) {
+        opsSub = null;
+        for (final process in processes) {
+          processSubs.add(process.stdout
+              .transform(utf8.decoder)
+              .transform(const LineSplitter())
+              .listen((line) {
+            if (line == 'DONE') {
+              doneWorkers++;
+            } else if (line.startsWith('P ')) {
+              final ops = int.tryParse(line.substring(2));
+              if (ops != null) registerOps(ops);
+            }
+          }));
+          processSubs.add(process.stderr
+              .transform(utf8.decoder)
+              .transform(const LineSplitter())
+              .listen((line) => AppLogger.instance.error(_logSource, 'CPU-workerproces: $line')));
         }
-        if (message is int) {
-          totalOps += message;
-          final phase =
-              (stopwatch.elapsed.inMilliseconds / duration.inMilliseconds * 3).floor().clamp(0, 2);
-          phaseOps[phase] += message;
-        }
-      });
+      } else {
+        opsSub = receivePort!.listen((message) {
+          if (message == 'done') {
+            doneWorkers++;
+            return;
+          }
+          if (message is int) registerOps(message);
+        });
+      }
 
       double? lastKnownLoad;
       double? lastKnownTemp;
@@ -441,10 +509,16 @@ class BenchmarkService {
         safetyTimer.cancel();
         _cpuTempFeed.release();
         _activeCpuHeavyTests--;
-        await opsSub.cancel();
-        receivePort.close();
+        await opsSub?.cancel();
+        for (final sub in processSubs) {
+          await sub.cancel();
+        }
+        receivePort?.close();
         for (final isolate in isolates) {
           isolate.kill(priority: Isolate.immediate);
+        }
+        for (final process in processes) {
+          process.kill();
         }
         if (!controller.isClosed) await controller.close();
       }
@@ -1184,25 +1258,15 @@ class BenchmarkService {
       case BenchmarkIntensity.gemiddeld:
         return max(1, (cores / 2).round());
       case BenchmarkIntensity.zwaar:
-        // VEILIGE CAP I.P.V. ALLE CORES (hier stond voorheen gewoon
-        // "return cores;" — op de testmachine dus 12 workers, zonder
-        // enige begrenzing). Root cause (bevestigd door het Dart-team
-        // zelf, zie dart-lang/sdk#51254 en flutter/flutter#161224): de
-        // Dart VM staat maar een vast, klein aantal isolates toe dat
-        // écht parallel mag draaien, los van het aantal CPU-cores. Een
-        // gdb thread-dump tijdens een echte bevriezing liet daarnaast
-        // ook nog eens extra "DartWorker"-OS-threads zien — Dart's eigen
-        // GC-hulpthreads (standaard "marker_tasks"/"compactor_tasks",
-        // 2+2), die pas verschijnen zodra er genoeg "rommel" is
-        // opgebouwd (vandaar dat de bevriezing pas na een tijdje
-        // optreedt, niet meteen). Met 12 eigen workers + die
-        // GC-hulpthreads kom je ruim boven de echte, onbekende maar
-        // kennelijk lage limiet uit. Deze cap verlaagt het eigen
-        // workeraantal naar 3, ruim onder die grens, ook met de
-        // GC-hulpthreads erbij.
-        return min(3, cores);
       case BenchmarkIntensity.duurtest:
-        return min(3, cores);
+        // Vol aantal cores zodra het losse workerproces beschikbaar is
+        // (zie _benchmarkWorkerBinary hierboven) — dan geldt de Dart
+        // VM-isolate-limiet niet meer, want elk workerproces draait in
+        // zijn eigen VM-instantie. Zonder dat losse programma (bijv.
+        // tijdens "flutter run" in ontwikkeling) blijft de oude,
+        // empirisch bevestigd veilige isolate-cap van 3 workers gelden,
+        // zodat de app nooit kan vastlopen — wel met een lagere score.
+        return _benchmarkWorkerBinary != null ? cores : min(3, cores);
     }
   }
 
@@ -1227,8 +1291,15 @@ class BenchmarkService {
     Future<void> run() async {
       final workerCount = workerCountOverride ?? _cryptoWorkerCountFor(intensity);
       final duration = _cryptoDurationFor(intensity);
-      final receivePort = ReceivePort();
+      // Zie de toelichting bij de CPU-test hierboven: zelfde losse-
+      // OS-proces-aanpak voor "zwaar"/"duurtest".
+      final useProcessWorkers = (intensity == BenchmarkIntensity.zwaar ||
+              intensity == BenchmarkIntensity.duurtest) &&
+          _benchmarkWorkerBinary != null;
+      final receivePort = useProcessWorkers ? null : ReceivePort();
       final isolates = <Isolate>[];
+      final processes = <Process>[];
+      final processSubs = <StreamSubscription<String>>[];
       final stopwatch = Stopwatch()..start();
       var totalBytes = 0;
       var peakTemp = 0.0;
@@ -1240,9 +1311,16 @@ class BenchmarkService {
       final powerAtStart = await _logPowerAtStart('Crypto-test');
 
       try {
-        for (var i = 0; i < workerCount; i++) {
-          isolates.add(await Isolate.spawn(
-              _cryptoWorkerEntry, _CryptoWorkerConfig(receivePort.sendPort, duration)));
+        if (useProcessWorkers) {
+          final binaryPath = _benchmarkWorkerBinary!.path;
+          for (var i = 0; i < workerCount; i++) {
+            processes.add(await Process.start(binaryPath, ['crypto', '${duration.inMilliseconds}']));
+          }
+        } else {
+          for (var i = 0; i < workerCount; i++) {
+            isolates.add(await Isolate.spawn(
+                _cryptoWorkerEntry, _CryptoWorkerConfig(receivePort!.sendPort, duration)));
+          }
         }
       } catch (e) {
         AppLogger.instance.error(_logSource, 'Kon crypto-testworkers niet starten: $e');
@@ -1264,13 +1342,39 @@ class BenchmarkService {
       final workStopwatch = Stopwatch()..start();
 
       var doneWorkers = 0;
-      final opsSub = receivePort.listen((message) {
-        if (message == 'done') {
-          doneWorkers++;
-          return;
+      void registerBytes(int bytes) {
+        totalBytes += bytes;
+      }
+
+      final StreamSubscription? opsSub;
+      if (useProcessWorkers) {
+        opsSub = null;
+        for (final process in processes) {
+          processSubs.add(process.stdout
+              .transform(utf8.decoder)
+              .transform(const LineSplitter())
+              .listen((line) {
+            if (line == 'DONE') {
+              doneWorkers++;
+            } else if (line.startsWith('P ')) {
+              final bytes = int.tryParse(line.substring(2));
+              if (bytes != null) registerBytes(bytes);
+            }
+          }));
+          processSubs.add(process.stderr
+              .transform(utf8.decoder)
+              .transform(const LineSplitter())
+              .listen((line) => AppLogger.instance.error(_logSource, 'Crypto-workerproces: $line')));
         }
-        if (message is int) totalBytes += message;
-      });
+      } else {
+        opsSub = receivePort!.listen((message) {
+          if (message == 'done') {
+            doneWorkers++;
+            return;
+          }
+          if (message is int) registerBytes(message);
+        });
+      }
 
       double? lastKnownTemp;
 
@@ -1370,10 +1474,16 @@ class BenchmarkService {
         safetyTimer.cancel();
         _cpuTempFeed.release();
         _activeCpuHeavyTests--;
-        await opsSub.cancel();
-        receivePort.close();
+        await opsSub?.cancel();
+        for (final sub in processSubs) {
+          await sub.cancel();
+        }
+        receivePort?.close();
         for (final isolate in isolates) {
           isolate.kill(priority: Isolate.immediate);
+        }
+        for (final process in processes) {
+          process.kill();
         }
         if (!controller.isClosed) await controller.close();
       }
