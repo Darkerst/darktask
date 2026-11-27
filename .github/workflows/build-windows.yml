@@ -36,6 +36,21 @@ jobs:
       - name: Build Windows release
         run: flutter build windows --release
 
+      - name: Build benchmark-worker companion binary
+        # Zelfde companion-binary als op Linux (zie tools/benchmark_worker/
+        # en de toelichting bij _benchmarkWorkerBinary in
+        # benchmark_service.dart) — nu ook voor Windows gecompileerd, zodat
+        # "zwaar"/"duurtest" ook hier het volledige aantal cores gebruikt
+        # i.p.v. de veilige isolate-cap van 3. "dart compile exe"
+        # compileert alleen voor het platform waarop het zelf draait,
+        # vandaar deze stap hier (Windows-runner) i.p.v. hergebruik van
+        # het Linux-gecompileerde bestand.
+        run: |
+          cd tools/benchmark_worker
+          dart pub get
+          cd ../..
+          dart compile exe tools/benchmark_worker/bin/benchmark_worker.dart -o build/windows/x64/runner/Release/darktask_benchmark_worker.exe
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:

@@ -198,14 +198,19 @@ class BenchmarkService {
   // isolate-cap van 3 workers, zodat de app ook dan nooit kan
   // vastlopen — alleen met een lagere score.
   //
-  // Alleen relevant op Linux: dit "reageert niet"-probleem is
-  // Linux-specifiek; de Windows-tests blijven ongewijzigd op isolates.
+  // Linux en Windows: op allebei compileert de CI-pipeline het losse
+  // companion-programma (tools/benchmark_worker/) mee naast de
+  // hoofd-executable — "darktask_benchmark_worker" op Linux,
+  // "darktask_benchmark_worker.exe" op Windows. Ontbreekt het (bijv.
+  // tijdens "flutter run" in ontwikkeling, zonder die CI-stap), dan
+  // geldt op beide platforms dezelfde veilige isolate-cap van 3.
   File? get _benchmarkWorkerBinary {
     if (_benchmarkWorkerBinaryChecked) return _benchmarkWorkerBinaryCache;
     _benchmarkWorkerBinaryChecked = true;
-    if (!Platform.isLinux) return null;
+    if (!Platform.isLinux && !Platform.isWindows) return null;
     final dir = File(Platform.resolvedExecutable).parent.path;
-    final candidate = File('$dir${Platform.pathSeparator}darktask_benchmark_worker');
+    final name = Platform.isWindows ? 'darktask_benchmark_worker.exe' : 'darktask_benchmark_worker';
+    final candidate = File('$dir${Platform.pathSeparator}$name');
     _benchmarkWorkerBinaryCache = candidate.existsSync() ? candidate : null;
     return _benchmarkWorkerBinaryCache;
   }
