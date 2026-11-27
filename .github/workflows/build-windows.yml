@@ -71,6 +71,20 @@ jobs:
           CXXFLAGS: "-Wno-error=deprecated-declarations"
         run: flutter build linux --release
 
+      - name: Build benchmark-worker companion binary
+        # Los, puur-Dart CLI-programma (zie tools/benchmark_worker/) dat
+        # benchmark_service.dart bij "zwaar"/"duurtest" als los OS-proces
+        # start i.p.v. een Dart-isolate, om de Dart VM's isolate-
+        # parallellisme-limiet te omzeilen (zie de toelichting in
+        # benchmark_service.dart). Los pub-get vereist: dit is een eigen,
+        # minimale package, bewust buiten de Flutter-package-graph van de
+        # hoofdapp (die heeft packages met "build hooks" die "dart
+        # compile exe" laat weigeren).
+        run: |
+          (cd tools/benchmark_worker && dart pub get)
+          dart compile exe tools/benchmark_worker/bin/benchmark_worker.dart \
+            -o build/linux/x64/release/bundle/darktask_benchmark_worker
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
