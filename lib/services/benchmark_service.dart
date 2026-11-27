@@ -190,9 +190,25 @@ class BenchmarkService {
       case BenchmarkIntensity.gemiddeld:
         return max(1, (cores / 2).round());
       case BenchmarkIntensity.zwaar:
-        return cores;
+        // VEILIGE CAP I.P.V. ALLE CORES (hier stond voorheen gewoon
+        // "return cores;" — op de testmachine dus 12 workers, zonder
+        // enige begrenzing). Root cause (bevestigd door het Dart-team
+        // zelf, zie dart-lang/sdk#51254 en flutter/flutter#161224): de
+        // Dart VM staat maar een vast, klein aantal isolates toe dat
+        // écht parallel mag draaien, los van het aantal CPU-cores. Een
+        // gdb thread-dump tijdens een echte bevriezing liet daarnaast
+        // ook nog eens extra "DartWorker"-OS-threads zien — Dart's eigen
+        // GC-hulpthreads (standaard "marker_tasks"/"compactor_tasks",
+        // 2+2), die pas verschijnen zodra er genoeg "rommel" is
+        // opgebouwd (vandaar dat de bevriezing pas na een tijdje
+        // optreedt, niet meteen). Met 12 eigen workers + die
+        // GC-hulpthreads kom je ruim boven de echte, onbekende maar
+        // kennelijk lage limiet uit. Deze cap verlaagt het eigen
+        // workeraantal naar 3, ruim onder die grens, ook met de
+        // GC-hulpthreads erbij.
+        return min(3, cores);
       case BenchmarkIntensity.duurtest:
-        return cores;
+        return min(3, cores);
     }
   }
 
@@ -1168,9 +1184,25 @@ class BenchmarkService {
       case BenchmarkIntensity.gemiddeld:
         return max(1, (cores / 2).round());
       case BenchmarkIntensity.zwaar:
-        return cores;
+        // VEILIGE CAP I.P.V. ALLE CORES (hier stond voorheen gewoon
+        // "return cores;" — op de testmachine dus 12 workers, zonder
+        // enige begrenzing). Root cause (bevestigd door het Dart-team
+        // zelf, zie dart-lang/sdk#51254 en flutter/flutter#161224): de
+        // Dart VM staat maar een vast, klein aantal isolates toe dat
+        // écht parallel mag draaien, los van het aantal CPU-cores. Een
+        // gdb thread-dump tijdens een echte bevriezing liet daarnaast
+        // ook nog eens extra "DartWorker"-OS-threads zien — Dart's eigen
+        // GC-hulpthreads (standaard "marker_tasks"/"compactor_tasks",
+        // 2+2), die pas verschijnen zodra er genoeg "rommel" is
+        // opgebouwd (vandaar dat de bevriezing pas na een tijdje
+        // optreedt, niet meteen). Met 12 eigen workers + die
+        // GC-hulpthreads kom je ruim boven de echte, onbekende maar
+        // kennelijk lage limiet uit. Deze cap verlaagt het eigen
+        // workeraantal naar 3, ruim onder die grens, ook met de
+        // GC-hulpthreads erbij.
+        return min(3, cores);
       case BenchmarkIntensity.duurtest:
-        return cores;
+        return min(3, cores);
     }
   }
 
