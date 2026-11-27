@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:flutter/material.dart';
 
@@ -15,8 +16,21 @@ import 'services/power_context.dart';
 import 'services/settings_service.dart';
 import 'services/tray_service.dart';
 
-void main() async {
+void main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // TIJDELIJKE, MINIMALE REPRODUCTIE (los van alle normale app-logica:
+  // geen sensors, geen AlertMonitorService, geen TrayService, geen
+  // SettingsService/BenchmarkHistoryStore) om definitief vast te
+  // stellen of het "reageert niet"-probleem puur zit in "veel Dart-
+  // isolates met zware synchrone code spawnen in een Flutter Linux
+  // GTK-app", losstaand van de rest van DarkTask's eigen code. Start
+  // met: ./darktask --mini-isolate-test
+  if (args.contains('--mini-isolate-test')) {
+    runApp(const _MiniIsolateTestApp());
+    return;
+  }
+
   AppLogger.instance.info('main', 'DarkTask starting up');
   // Logs once, immediately, whether this process is actually running
   // elevated — a definitive, direct answer straight from Windows
@@ -72,4 +86,85 @@ void main() async {
   }
 
   runApp(DarkTaskApp(sensors: sensors));
+}
+
+/// Zie de toelichting bij de `--mini-isolate-test`-vlag in [main]
+/// hierboven. Spawnt bij het indrukken van de knop net zoveel pure
+/// busy-loop-isolates als er logische cores zijn (dus 12 op deze
+/// machine) — exact dezelfde soort rekenlus als de echte CPU-test,
+/// maar zonder enige van DarkTask's eigen services eromheen — en telt
+/// elke seconde zichtbaar door op het scherm. Als dit venster blijft
+/// doortellen zonder "reageert niet", zit het probleem ergens in
+/// DarkTask's eigen code rondom de echte test (AlertMonitorService,
+/// TrayService, sensors, enz.), niet in het kale isolate-mechanisme
+/// zelf. Blijft de teller ook hier stilstaan / verschijnt ook hier
+/// "reageert niet", dan is het puur een Flutter/Dart-op-Linux-
+/// beperking, losstaand van al het andere in deze app.
+class _MiniIsolateTestApp extends StatefulWidget {
+  const _MiniIsolateTestApp();
+
+  @override
+  State<_MiniIsolateTestApp> createState() => _MiniIsolateTestAppState();
+}
+
+class _MiniIsolateTestAppState extends State<_MiniIsolateTestApp> {
+  bool _started = false;
+  int _tick = 0;
+  Timer? _timer;
+
+  Future<void> _start() async {
+    setState(() => _started = true);
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() => _tick++);
+    });
+    final cores = Platform.numberOfProcessors;
+    for (var i = 0; i < cores; i++) {
+      await Isolate.spawn(_miniBusyLoop, i);
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      home: Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                _started
+                    ? 'Bezig met ${Platform.numberOfProcessors} busy-loop-isolates — teller: $_tick'
+                    : 'Nog niet gestart (${Platform.numberOfProcessors} cores gevonden)',
+                style: const TextStyle(fontSize: 20),
+              ),
+              const SizedBox(height: 24),
+              ElevatedButton(
+                onPressed: _started ? null : _start,
+                child: const Text('Start mini isolate-test'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Pure, oneindige synchrone rekenlus — bewust zonder enige await/yield
+/// — identiek qua aard aan wat de echte CPU-test tot voor kort deed,
+/// om de kale isolate-situatie zo zuiver mogelijk na te bootsen.
+void _miniBusyLoop(int seed) {
+  var x = 1.000001 + seed * 0.00001;
+  while (true) {
+    for (var i = 0; i < 200000; i++) {
+      x = x * 1.0000001 + 0.0000001;
+      if (x > 1e6 || x.isNaN || x.isInfinite) x = 1.000001;
+    }
+  }
 }
