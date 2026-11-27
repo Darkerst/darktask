@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:ui' show Size;
 
 import 'package:local_notifier/local_notifier.dart';
 import 'package:tray_manager/legacy.dart';
@@ -120,6 +121,19 @@ class TrayService with TrayListener, WindowListener {
       // show() already gives the window focus (per window_manager's own
       // docs) — no separate focus() call needed.
       await windowManager.show();
+      if (Platform.isLinux) {
+        // Linux/GTK-specifieke workaround: na hide() + show() bleef het
+        // venster soms een zwart vlak tonen totdat er een resize-event
+        // binnenkwam — Flutter/GTK "vergeet" blijkbaar opnieuw te
+        // tekenen na het simpelweg weer zichtbaar maken (bevestigd: het
+        // venster handmatig een klein beetje resizen liet de echte
+        // inhoud alsnog verschijnen). Deze onzichtbare resize-nudge (1
+        // pixel erbij en meteen weer terug) dwingt diezelfde repaint af
+        // zonder dat de gebruiker het zelf hoeft te doen.
+        final size = await windowManager.getSize();
+        await windowManager.setSize(Size(size.width + 1, size.height));
+        await windowManager.setSize(size);
+      }
     } catch (e) {
       AppLogger.instance.error(_logSource, 'Failed to show window: $e');
     }
