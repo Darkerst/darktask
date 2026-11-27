@@ -113,7 +113,7 @@ class _MiniIsolateTestAppState extends State<_MiniIsolateTestApp> {
   int _tick = 0;
   Timer? _timer;
 
-  Future<void> _start(String label, {required int workerCount, required bool yield}) async {
+  Future<void> _start(String label, {required int workerCount, required bool withYield}) async {
     setState(() {
       _started = true;
       _running = label;
@@ -122,7 +122,7 @@ class _MiniIsolateTestAppState extends State<_MiniIsolateTestApp> {
       if (mounted) setState(() => _tick++);
     });
     for (var i = 0; i < workerCount; i++) {
-      await Isolate.spawn(yield ? _miniBusyLoopWithYield : _miniBusyLoop, i);
+      await Isolate.spawn(withYield ? _miniBusyLoopWithYield : _miniBusyLoop, i);
     }
   }
 
@@ -151,19 +151,19 @@ class _MiniIsolateTestAppState extends State<_MiniIsolateTestApp> {
               ElevatedButton(
                 onPressed: _started
                     ? null
-                    : () => _start('A: $cores isolates, geen yield', workerCount: cores, yield: false),
+                    : () => _start('A: $cores isolates, geen yield', workerCount: cores, withYield: false),
                 child: Text('A: $cores isolates — zonder yield'),
               ),
               const SizedBox(height: 12),
               ElevatedButton(
                 onPressed: _started
                     ? null
-                    : () => _start('B: $cores isolates, MET yield', workerCount: cores, yield: true),
+                    : () => _start('B: $cores isolates, MET yield', workerCount: cores, withYield: true),
                 child: Text('B: $cores isolates — met yield'),
               ),
               const SizedBox(height: 12),
               ElevatedButton(
-                onPressed: _started ? null : () => _start('C: 6 isolates, geen yield', workerCount: 6, yield: false),
+                onPressed: _started ? null : () => _start('C: 6 isolates, geen yield', workerCount: 6, withYield: false),
                 child: const Text('C: 6 isolates — zonder yield'),
               ),
             ],
