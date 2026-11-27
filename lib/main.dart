@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:isolate';
+import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 
 import 'app.dart';
@@ -126,6 +128,21 @@ class _MiniIsolateTestAppState extends State<_MiniIsolateTestApp> {
     }
   }
 
+  Future<void> _startCryptoLike() async {
+    setState(() {
+      _started = true;
+      _running = 'D: 6 isolates, echte crypto-hashing';
+    });
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() => _tick++);
+    });
+    final receivePort = ReceivePort();
+    receivePort.listen((_) {});
+    for (var i = 0; i < 6; i++) {
+      await Isolate.spawn(_miniCryptoWorker, receivePort.sendPort);
+    }
+  }
+
   @override
   void dispose() {
     _timer?.cancel();
@@ -166,6 +183,15 @@ class _MiniIsolateTestAppState extends State<_MiniIsolateTestApp> {
                 onPressed: _started ? null : () => _start('C: 6 isolates, geen yield', workerCount: 6, withYield: false),
                 child: const Text('C: 6 isolates — zonder yield'),
               ),
+              const SizedBox(height: 12),
+              // D: 6 isolates, maar nu met ECHTE sha256-hashwerk (zoals
+              // de echte crypto-test: alloceert continu en stuurt elke
+              // 200ms een bericht terug) — test of niet het aantal
+              // isolates maar de ALLOCATIE/berichten-druk de echte boosdoener is.
+              ElevatedButton(
+                onPressed: _started ? null : _startCryptoLike,
+                child: const Text('D: 6 isolates — echte crypto-hashing'),
+              ),
             ],
           ),
         ),
@@ -199,5 +225,28 @@ void _miniBusyLoopWithYield(int seed) async {
       if (x > 1e6 || x.isNaN || x.isInfinite) x = 1.000001;
     }
     await Future<void>.delayed(Duration.zero);
+  }
+}
+
+/// Repliceert exact de echte crypto-workerlus (sha256-hashen op een
+/// 4 MiB-buffer, elke ~200ms een voortgangsbericht terugsturen) — maar
+/// hier volledig losstaand van de rest van de app.
+void _miniCryptoWorker(SendPort sendPort) {
+  final data = Uint8List(4 * 1024 * 1024);
+  for (var i = 0; i < data.length; i += 4096) {
+    data[i] = 1;
+  }
+  final stopwatch = Stopwatch()..start();
+  var bytesSinceReport = 0;
+  var lastReportMs = 0;
+  while (true) {
+    sha256.convert(data);
+    bytesSinceReport += data.length;
+    final nowMs = stopwatch.elapsedMilliseconds;
+    if (nowMs - lastReportMs >= 200) {
+      sendPort.send(bytesSinceReport);
+      bytesSinceReport = 0;
+      lastReportMs = nowMs;
+    }
   }
 }
