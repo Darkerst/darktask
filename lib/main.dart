@@ -109,17 +109,20 @@ class _MiniIsolateTestApp extends StatefulWidget {
 
 class _MiniIsolateTestAppState extends State<_MiniIsolateTestApp> {
   bool _started = false;
+  String? _running;
   int _tick = 0;
   Timer? _timer;
 
-  Future<void> _start() async {
-    setState(() => _started = true);
+  Future<void> _start(String label, {required int workerCount, required bool yield}) async {
+    setState(() {
+      _started = true;
+      _running = label;
+    });
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) setState(() => _tick++);
     });
-    final cores = Platform.numberOfProcessors;
-    for (var i = 0; i < cores; i++) {
-      await Isolate.spawn(_miniBusyLoop, i);
+    for (var i = 0; i < workerCount; i++) {
+      await Isolate.spawn(yield ? _miniBusyLoopWithYield : _miniBusyLoop, i);
     }
   }
 
@@ -131,6 +134,7 @@ class _MiniIsolateTestAppState extends State<_MiniIsolateTestApp> {
 
   @override
   Widget build(BuildContext context) {
+    final cores = Platform.numberOfProcessors;
     return MaterialApp(
       home: Scaffold(
         body: Center(
@@ -139,14 +143,28 @@ class _MiniIsolateTestAppState extends State<_MiniIsolateTestApp> {
             children: [
               Text(
                 _started
-                    ? 'Bezig met ${Platform.numberOfProcessors} busy-loop-isolates — teller: $_tick'
-                    : 'Nog niet gestart (${Platform.numberOfProcessors} cores gevonden)',
+                    ? 'Bezig: $_running — teller: $_tick'
+                    : 'Nog niet gestart ($cores cores gevonden)',
                 style: const TextStyle(fontSize: 20),
               ),
               const SizedBox(height: 24),
               ElevatedButton(
-                onPressed: _started ? null : _start,
-                child: const Text('Start mini isolate-test'),
+                onPressed: _started
+                    ? null
+                    : () => _start('A: $cores isolates, geen yield', workerCount: cores, yield: false),
+                child: Text('A: $cores isolates — zonder yield'),
+              ),
+              const SizedBox(height: 12),
+              ElevatedButton(
+                onPressed: _started
+                    ? null
+                    : () => _start('B: $cores isolates, MET yield', workerCount: cores, yield: true),
+                child: Text('B: $cores isolates — met yield'),
+              ),
+              const SizedBox(height: 12),
+              ElevatedButton(
+                onPressed: _started ? null : () => _start('C: 6 isolates, geen yield', workerCount: 6, yield: false),
+                child: const Text('C: 6 isolates — zonder yield'),
               ),
             ],
           ),
@@ -166,5 +184,20 @@ void _miniBusyLoop(int seed) {
       x = x * 1.0000001 + 0.0000001;
       if (x > 1e6 || x.isNaN || x.isInfinite) x = 1.000001;
     }
+  }
+}
+
+/// Zelfde rekenlus als [_miniBusyLoop], maar nu met exact dezelfde
+/// `await Future<void>.delayed(Duration.zero);`-yield die ook al in de
+/// echte CPU-/crypto-workers zit — hier getest in de meest kale,
+/// geïsoleerde vorm mogelijk.
+void _miniBusyLoopWithYield(int seed) async {
+  var x = 1.000001 + seed * 0.00001;
+  while (true) {
+    for (var i = 0; i < 200000; i++) {
+      x = x * 1.0000001 + 0.0000001;
+      if (x > 1e6 || x.isNaN || x.isInfinite) x = 1.000001;
+    }
+    await Future<void>.delayed(Duration.zero);
   }
 }
