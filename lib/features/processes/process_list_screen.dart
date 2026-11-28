@@ -29,6 +29,18 @@ class _ProcessListScreenState extends State<ProcessListScreen> {
   List<ProcessInfo> _processes = [];
   String _filter = '';
 
+  // readPerProcessGpuLoad() is bewust relatief duur (zie die method's
+  // class-doc in windows_sensor_service.dart: elke keer verse
+  // performance-counters + een settle-sample, omdat persistente tellers
+  // hier een reeel risico op foutieve data geven bij PID-hergebruik).
+  // Een "nice to have" kolom als per-proces GPU-load hoeft niet elke
+  // 2s-poll vers te zijn -- 1 op de 3 (~6s) volstaat ruim, terwijl de
+  // rest van de lijst (naam/CPU%/geheugen, via de snelle native
+  // ProcessSnapshotReader) gewoon elke 2s blijft verversen.
+  static const _gpuLoadEveryNRefreshes = 3;
+  int _refreshCount = 0;
+  Map<int, double> _lastGpuByPid = const {};
+
   @override
   void initState() {
     super.initState();
@@ -84,17 +96,30 @@ class _ProcessListScreenState extends State<ProcessListScreen> {
   }
 
   Future<void> _refresh() async {
-    final processes = await _service.listProcesses();
-    // A separate, optional read — never lets a GPU-tracking hiccup
-    // (see readPerProcessGpuLoad's platform-specific class docs for
-    // why this is inherently best-effort on both platforms) hold up
-    // or break the core process list, which is the part people
-    // actually rely on.
-    Map<int, double> gpuByPid = const {};
-    try {
-      gpuByPid = await widget.sensors.readPerProcessGpuLoad();
-    } catch (e) {
-      AppLogger.instance.debug(_logSource, 'Failed to read per-process GPU load: $e');
+    // Beide onafhankelijke reads meteen starten (niet na elkaar
+    // awaiten) zodat de trage GPU-query, als die deze keer aan de
+    // beurt is, niet nog eens bovenop de proceslijst-tijd komt.
+    final processesFuture = _service.listProcesses();
+
+    _refreshCount++;
+    final fetchGpu = _refreshCount % _gpuLoadEveryNRefreshes == 0;
+    final gpuFuture = fetchGpu ? widget.sensors.readPerProcessGpuLoad() : null;
+
+    final processes = await processesFuture;
+
+    // Een separate, optionele read — een GPU-tracking-hiccup mag de
+    // kern-proceslijst (waar mensen echt op vertrouwen) nooit
+    // ophouden of breken. Buiten de polls waarin de GPU-load niet
+    // vers wordt opgehaald, hergebruiken we gewoon de laatst bekende
+    // waarde in plaats van de kolom te laten leeglopen.
+    var gpuByPid = _lastGpuByPid;
+    if (gpuFuture != null) {
+      try {
+        gpuByPid = await gpuFuture;
+        _lastGpuByPid = gpuByPid;
+      } catch (e) {
+        AppLogger.instance.debug(_logSource, 'Failed to read per-process GPU load: $e');
+      }
     }
 
     final merged = gpuByPid.isEmpty
